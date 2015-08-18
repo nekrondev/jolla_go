@@ -31,16 +31,4 @@ diff -ruN go/src/runtime/os_linux.h /home/mersdk/go/src/runtime/os_linux.h
  	SI_USER = 0,
  	SIG_SETMASK = 2,
  	RLIMIT_AS = 9,
-diff -ruN go/src/runtime/zruntime_defs_linux_386.go /home/mersdk/go/src/runtime/zruntime_defs_linux_386.go
---- go/src/runtime/zruntime_defs_linux_386.go	2015-02-18 04:51:26.000000000 +0000
-+++ /home/mersdk/go/src/runtime/zruntime_defs_linux_386.go	2015-08-10 11:21:53.859509824 +0000
-@@ -950,7 +950,7 @@
- }
- 
- const _SS_DISABLE = 2
--const _NSIG = 65
-+const _NSIG = 64
- const _SI_USER = 0
- const _SIG_SETMASK = 2
- const _RLIMIT_AS = 9
 
