@@ -38,7 +38,7 @@ printf " - Added new CPP method newTranslator() to install i18n files for QML ap
 printf " - Added GO QML func Translator(path_to_i18n_directory) to load qml_<system locale>.qm translation file\n"
 printf " - Added new QDateTime packing/unpacking for GO runtime time.Time types\n"
 printf " - Added CloseEventFilter for QQuickWindow to signal closing to Silica application\n"
-printf " - Disabled orignal hookWindowHidded() trigger since coverview of Silica QML would close application\n\n"
+printf " - Disabled original hookWindowHidded() trigger since coverview of Silica QML would close application\n\n"
 read -p "Press [ENTER] to accept the given modifications and continue installation ..."
 
 # Creating temp directory for downloads
@@ -117,7 +117,7 @@ printf "${GREEN}Installing VIM pathogen plugin ...${NOCOLORLF}"
 mkdir -p ~/.vim/autoload ~/.vim/bundle && curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
 printf "${GREEN}Installing GO VIM plugin ...${NOCOLORLF}"
 git clone https://github.com/fatih/vim-go.git ~/.vim/bundle/vim-go
-printf "${GREEN}Installing GO QML syntax plugin ...${NOCOLORLF}"
+printf "${GREEN}Installing vim QML syntax plugin ...${NOCOLORLF}"
 git clone https://github.com/peterhoeg/vim-qml.git ~/.vim/bundle/vim-qml
 
 export PATH=$PATH:~/go/bin
