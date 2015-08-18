@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # GO runtime installation (quick and dirty)
 # (C) 2015 Nekron
 
