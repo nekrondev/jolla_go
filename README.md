@@ -2,7 +2,7 @@
 Quick installation instructions for vanilla MerSDK VM<br>
 - Log into MerSDK VM as mersdk (ssh mersdk@127.0.0.1) (you should add your public/private ssh key to your setup)
 - Clone repository into home by executing git clone https://github.com/nekrondev/jolla_go.git ~/
-- Make setup script executable chmod +x ./mersdk_jolla_go.sh
+- Make sure that setup script is executable chmod +x ./mersdk_jolla_go.sh
 - Launch setup script ./mersdk_jolla_go.sh
 
 After script has launched it will take some time to build the Jolla Go runtime on MerSDK.<br>
