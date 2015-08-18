@@ -6,7 +6,7 @@ Quick installation instructions for vanilla MerSDK VM<br>
 - Launch setup script ./mersdk_jolla_go.sh
 
 After script has launched it will take some time to build the Jolla Go runtime on MerSDK.<br>
-As a bonus I included the world famout dewpoint calculator source. You can compile it by doing the following steps after 
+As a bonus I included the world famous dewpoint calculator source. You can compile it by doing the following steps after 
 GO runtime has been created:<br>
 
  - cd ~/src/dewpointcalc
