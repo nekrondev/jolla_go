@@ -1,0 +1,456 @@
+diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
+--- qml-1/bridge.go	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/bridge.go	2015-08-11 09:23:54.229648403 +0000
+@@ -3,7 +3,7 @@
+ // #cgo CPPFLAGS: -I./cpp
+ // #cgo CXXFLAGS: -std=c++0x -pedantic-errors -Wall -fno-strict-aliasing
+ // #cgo LDFLAGS: -lstdc++
+-// #cgo pkg-config: Qt5Core Qt5Widgets Qt5Quick
++// #cgo pkg-config: Qt5Core Qt5Quick
+ //
+ // #include <stdlib.h>
+ //
+@@ -23,12 +23,12 @@
+ )
+ 
+ var (
+-	guiFunc      = make(chan func())
+-	guiDone      = make(chan struct{})
+-	guiLock      = 0
+-	guiMainRef   uintptr
+-	guiPaintRef  uintptr
+-	guiIdleRun   int32
++	guiFunc     = make(chan func())
++	guiDone     = make(chan struct{})
++	guiLock     = 0
++	guiMainRef  uintptr
++	guiPaintRef uintptr
++	guiIdleRun  int32
+ 
+ 	initialized int32
+ )
+Binary files qml-1/cmd/genqrc/genqrc and /home/mersdk/src/gopkg.in/qml.v1/cmd/genqrc/genqrc differ
+diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
+--- qml-1/cpp/capi.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp	2015-08-14 12:08:31.647399718 +0000
+@@ -1,10 +1,14 @@
+-#include <QApplication>
++#include <QGuiApplication>
+ #include <QQuickView>
+ #include <QQuickItem>
+ #include <QtQml>
+ #include <QDebug>
+ #include <QQuickImageProvider>
+ 
++//#include <sailfishapp.h>
++//#include <QScopedPointer>
++#include <QtCore/QTranslator>
++
+ #include <string.h>
+ 
+ #include "govalue.h"
+@@ -12,6 +16,20 @@
+ #include "connector.h"
+ #include "capi.h"
+ 
++//QGuiApplication *app;
++
++void newTranslator(QString_ *i18nroot)
++{
++    QString *root = reinterpret_cast<QString *>(i18nroot);
++    QTranslator *translator = new QTranslator;
++    if (translator->load(QLatin1String("qml_") + QLocale::system().name(), *root)) {
++        QCoreApplication::installTranslator(translator);
++        qDebug() << "Found i18n for " + QLocale::system().name();
++    } else {
++        qDebug() << "No translations found for language " + QLatin1String("qml_") + QLocale::system().name();
++    }
++}
++
+ static char *local_strdup(const char *str)
+ {
+     char *strcopy = 0;
+@@ -48,7 +66,10 @@
+     static char empty[1] = {0};
+     static char *argv[] = {empty, 0};
+     static int argc = 1;
+-    new QApplication(argc, argv);
++
++    //QScopedPointer< QGuiApplication > app(SailfishApp::application(argc, argv));
++    //app = SailfishApp::application(argc, argv);
++    new QGuiApplication(argc, argv);
+ 
+     // The event loop should never die.
+     qApp->setQuitOnLastWindowClosed(false);
+@@ -244,12 +265,43 @@
+     return reinterpret_cast<QQuickWindow *>(win)->winId();
+ }
+ 
++void destroyMe(QQuickCloseEvent *close)
++{
++    qDebug() << "Ok, called.";
++}
++
++
++class CloseEventFilter : public QObject
++{
++     Q_OBJECT
++public:
++     CloseEventFilter(QObject *parent) : QObject(parent) {}
++
++protected: 
++     bool eventFilter(QObject *obj, QEvent *event)
++     {
++          if (event->type() == QEvent::Close)
++          {
++            hookWindowHidden(obj);
++          }
++
++          return QObject::eventFilter(obj, event);
++     }
++};
++
++
+ void windowConnectHidden(QQuickWindow_ *win)
+ {
+     QQuickWindow *qwin = reinterpret_cast<QQuickWindow *>(win);
++    // Test
++    CloseEventFilter *closeFilter = new CloseEventFilter(qwin);
++    qwin->installEventFilter(closeFilter);
++    // Test End
+     QObject::connect(qwin, &QWindow::visibleChanged, [=](bool visible){
+         if (!visible) {
+-            hookWindowHidden(win);
++            // Disabled this because on SailfishOS switching to cover screen will exit application!
++            //hookWindowHidden(win);
++            //qDebug() << "hookWindowHidden() called";
+         }
+     });
+ }
+@@ -629,6 +681,9 @@
+     case DTColor:
+         *qvar = QColor::fromRgba(*(QRgb*)(value->data));
+         break;
++    case DTDateTime:
++        *qvar = QDateTime::fromTime_t(*(quint32*)(value->data));
++        break;
+     case DTVariantList:
+         *qvar = **(QVariantList**)(value->data);
+         delete *(QVariantList**)(value->data);
+@@ -709,6 +764,21 @@
+         value->dataType = DTColor;
+         *(unsigned int*)(value->data) = qvar->value<QColor>().rgba();
+         break;
++    case QMetaType::QDateTime:
++        value->dataType = DTDateTime;
++        *(quint32*)(value->data) = qvar->toUInt();
++        break;
++    case QMetaType::User:
++        {
++            if (qvar->userType() == 1034) {
++                auto var = qvar->value<QJSValue>().toVariant();
++                packDataValue(&var, value);
++            } else {
++                qDebug() << "user-type = " << qvar->userType() << " name = " << QVariant::typeToName(qvar->userType());
++            }
++        }
++        break;
++
+     case QMetaType::QVariantList:
+         {
+             QVariantList varlist = qvar->toList();
+diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
+--- qml-1/cpp/capi.h	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h	2015-08-13 15:11:12.109458402 +0000
+@@ -49,6 +49,7 @@
+     DTFloat64 = 17,
+     DTFloat32 = 18,
+     DTColor   = 19,
++    DTDateTime = 20,
+ 
+     DTGoAddr       = 100,
+     DTObject       = 101,
+@@ -116,6 +117,7 @@
+ void *currentThread();
+ void *appThread();
+ 
++void newTranslator(QString_ *translatorRoot);
+ QQmlEngine_ *newEngine(QObject_ *parent);
+ QQmlContext_ *engineRootContext(QQmlEngine_ *engine);
+ void engineSetOwnershipCPP(QQmlEngine_ *engine, QObject_ *object);
+@@ -154,6 +156,7 @@
+ void windowHide(QQuickWindow_ *win);
+ uintptr_t windowPlatformId(QQuickWindow_ *win);
+ void windowConnectHidden(QQuickWindow_ *win);
++void windowConnectDestroy(QQuickWindow_ *win);
+ QObject_ *windowRootObject(QQuickWindow_ *win);
+ QImage_ *windowGrabWindow(QQuickWindow_ *win);
+ 
+diff -ruN qml-1/cpp/moc_all.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp
+--- qml-1/cpp/moc_all.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp	2015-08-10 10:23:01.937702555 +0000
+@@ -1,4 +1,5 @@
+ // This file is automatically generated by cpp/update-moc.sh
++#include "cpp/moc_capi.cpp"
+ #include "cpp/moc_connector.cpp"
+ #include "cpp/moc_govalue.cpp"
+ #include "cpp/moc_idletimer.cpp"
+diff -ruN qml-1/cpp/moc_capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp
+--- qml-1/cpp/moc_capi.cpp	1970-01-01 00:00:00.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp	2015-08-10 10:23:01.905702523 +0000
+@@ -0,0 +1,87 @@
++/****************************************************************************
++** Meta object code from reading C++ file 'capi.cpp'
++**
++** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.2)
++**
++** WARNING! All changes made in this file will be lost!
++*****************************************************************************/
++
++#include <QtCore/qbytearray.h>
++#include <QtCore/qmetatype.h>
++#if !defined(Q_MOC_OUTPUT_REVISION)
++#error "The header file 'capi.cpp' doesn't include <QObject>."
++#elif Q_MOC_OUTPUT_REVISION != 67
++#error "This file was generated using the moc from 5.2.2. It"
++#error "cannot be used with the include files from this version of Qt."
++#error "(The moc has changed too much.)"
++#endif
++
++QT_BEGIN_MOC_NAMESPACE
++struct qt_meta_stringdata_CloseEventFilter_t {
++    QByteArrayData data[1];
++    char stringdata[18];
++};
++#define QT_MOC_LITERAL(idx, ofs, len) \
++    Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
++    offsetof(qt_meta_stringdata_CloseEventFilter_t, stringdata) + ofs \
++        - idx * sizeof(QByteArrayData) \
++    )
++static const qt_meta_stringdata_CloseEventFilter_t qt_meta_stringdata_CloseEventFilter = {
++    {
++QT_MOC_LITERAL(0, 0, 16)
++    },
++    "CloseEventFilter\0"
++};
++#undef QT_MOC_LITERAL
++
++static const uint qt_meta_data_CloseEventFilter[] = {
++
++ // content:
++       7,       // revision
++       0,       // classname
++       0,    0, // classinfo
++       0,    0, // methods
++       0,    0, // properties
++       0,    0, // enums/sets
++       0,    0, // constructors
++       0,       // flags
++       0,       // signalCount
++
++       0        // eod
++};
++
++void CloseEventFilter::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, void **_a)
++{
++    Q_UNUSED(_o);
++    Q_UNUSED(_id);
++    Q_UNUSED(_c);
++    Q_UNUSED(_a);
++}
++
++const QMetaObject CloseEventFilter::staticMetaObject = {
++    { &QObject::staticMetaObject, qt_meta_stringdata_CloseEventFilter.data,
++      qt_meta_data_CloseEventFilter,  qt_static_metacall, 0, 0}
++};
++
++
++const QMetaObject *CloseEventFilter::metaObject() const
++{
++    return QObject::d_ptr->metaObject ? QObject::d_ptr->dynamicMetaObject() : &staticMetaObject;
++}
++
++void *CloseEventFilter::qt_metacast(const char *_clname)
++{
++    if (!_clname) return 0;
++    if (!strcmp(_clname, qt_meta_stringdata_CloseEventFilter.stringdata))
++        return static_cast<void*>(const_cast< CloseEventFilter*>(this));
++    return QObject::qt_metacast(_clname);
++}
++
++int CloseEventFilter::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
++{
++    _id = QObject::qt_metacall(_c, _id, _a);
++    if (_id < 0)
++        return _id;
++    return _id;
++}
++QT_END_MOC_NAMESPACE
+diff -ruN qml-1/cpp/moc_connector.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp
+--- qml-1/cpp/moc_connector.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp	2015-08-10 10:23:01.915702533 +0000
+@@ -1,7 +1,7 @@
+ /****************************************************************************
+ ** Meta object code from reading C++ file 'connector.h'
+ **
+-** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.1)
++** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.2)
+ **
+ ** WARNING! All changes made in this file will be lost!
+ *****************************************************************************/
+@@ -12,7 +12,7 @@
+ #if !defined(Q_MOC_OUTPUT_REVISION)
+ #error "The header file 'connector.h' doesn't include <QObject>."
+ #elif Q_MOC_OUTPUT_REVISION != 67
+-#error "This file was generated using the moc from 5.2.1. It"
++#error "This file was generated using the moc from 5.2.2. It"
+ #error "cannot be used with the include files from this version of Qt."
+ #error "(The moc has changed too much.)"
+ #endif
+diff -ruN qml-1/cpp/moc_govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp
+--- qml-1/cpp/moc_govalue.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp	2015-08-10 10:23:01.926702544 +0000
+@@ -1,7 +1,7 @@
+ /****************************************************************************
+ ** Meta object code from reading C++ file 'govalue.h'
+ **
+-** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.1)
++** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.2)
+ **
+ ** WARNING! All changes made in this file will be lost!
+ *****************************************************************************/
+@@ -12,7 +12,7 @@
+ #if !defined(Q_MOC_OUTPUT_REVISION)
+ #error "The header file 'govalue.h' doesn't include <QObject>."
+ #elif Q_MOC_OUTPUT_REVISION != 67
+-#error "This file was generated using the moc from 5.2.1. It"
++#error "This file was generated using the moc from 5.2.2. It"
+ #error "cannot be used with the include files from this version of Qt."
+ #error "(The moc has changed too much.)"
+ #endif
+diff -ruN qml-1/cpp/moc_idletimer.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp
+--- qml-1/cpp/moc_idletimer.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp	2015-08-10 10:23:01.937702555 +0000
+@@ -1,7 +1,7 @@
+ /****************************************************************************
+ ** Meta object code from reading C++ file 'idletimer.cpp'
+ **
+-** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.1)
++** Created by: The Qt Meta Object Compiler version 67 (Qt 5.2.2)
+ **
+ ** WARNING! All changes made in this file will be lost!
+ *****************************************************************************/
+@@ -11,7 +11,7 @@
+ #if !defined(Q_MOC_OUTPUT_REVISION)
+ #error "The header file 'idletimer.cpp' doesn't include <QObject>."
+ #elif Q_MOC_OUTPUT_REVISION != 67
+-#error "This file was generated using the moc from 5.2.1. It"
++#error "This file was generated using the moc from 5.2.2. It"
+ #error "cannot be used with the include files from this version of Qt."
+ #error "(The moc has changed too much.)"
+ #endif
+diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
+--- qml-1/datatype.go	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/datatype.go	2015-08-14 13:06:03.408788095 +0000
+@@ -10,6 +10,7 @@
+ 	"image/color"
+ 	"reflect"
+ 	"strings"
++	"time"
+ 	"unicode"
+ 	"unsafe"
+ )
+@@ -37,6 +38,7 @@
+ 	typePainter    = reflect.TypeOf(&Painter{})
+ 	typeList       = reflect.TypeOf(&List{})
+ 	typeMap        = reflect.TypeOf(&Map{})
++	typeDateTime   = reflect.TypeOf(&time.Time{})
+ 	typeGenericMap = reflect.TypeOf(map[string]interface{}(nil))
+ )
+ 
+@@ -108,6 +110,9 @@
+ 	case color.RGBA:
+ 		dvalue.dataType = C.DTColor
+ 		*(*uint32)(datap) = uint32(value.A)<<24 | uint32(value.R)<<16 | uint32(value.G)<<8 | uint32(value.B)
++	case *time.Time:
++		dvalue.dataType = C.DTDateTime
++		*(*uint32)(datap) = uint32(value.Unix())
+ 	default:
+ 		dvalue.dataType = C.DTObject
+ 		if obj, ok := value.(Object); ok {
+@@ -152,6 +157,9 @@
+ 	case C.DTColor:
+ 		var c uint32 = *(*uint32)(datap)
+ 		return color.RGBA{byte(c >> 16), byte(c >> 8), byte(c), byte(c >> 24)}
++	case C.DTDateTime:
++		var d int64 = int64(*(*uint32)(datap))
++		return time.Unix(d, 0)
+ 	case C.DTGoAddr:
+ 		// ObjectByName also does this fold conversion, to have access
+ 		// to the cvalue. Perhaps the fold should be returned.
+@@ -222,6 +230,8 @@
+ 		return C.DTAny
+ 	case typeRGBA:
+ 		return C.DTColor
++	case typeDateTime:
++		return C.DTDateTime
+ 	case typeObjSlice:
+ 		return C.DTListProperty
+ 	}
+diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
+--- qml-1/qml.go	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/qml.go	2015-08-13 15:09:29.595465898 +0000
+@@ -241,6 +241,15 @@
+ 	})
+ }
+ 
++func (e *Engine) Translator(translatorRoot string) {
++	ctranslatorRoot, ctranslatorLen := unsafeStringData(translatorRoot)
++	RunMain(func() {
++		qtranslatorRoot := C.newString(ctranslatorRoot, ctranslatorLen)
++		defer C.delString(qtranslatorRoot)
++		C.newTranslator(qtranslatorRoot)
++	})
++}
++
+ //export hookRequestImage
+ func hookRequestImage(imageFunc unsafe.Pointer, cid *C.char, cidLen, cwidth, cheight C.int) unsafe.Pointer {
+ 	f := *(*func(imgId string, width, height int) image.Image)(imageFunc)
+@@ -903,9 +912,11 @@
+ 	var m sync.Mutex
+ 	m.Lock()
+ 	RunMain(func() {
+-		// TODO Must be able to wait for the same Window from multiple goroutines.
++		// TODO  Must be able to wait for the same Window from multiple goroutines.
+ 		// TODO If the window is not visible, must return immediately.
+ 		waitingWindows[win.addr] = &m
++		// BUG: Exiting on window hidden will fail on SailfishOS when cover image is shown app will exit
++		// Solved this by implementing closeEvent filter for QWindows
+ 		C.windowConnectHidden(win.addr)
+ 	})
+ 	m.Lock()
+@@ -1088,9 +1099,9 @@
+ 	} else if len(r.bdata) > 0 {
+ 		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
+ 	}
+-	tree := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.treeOffset)))
+-	name := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.nameOffset)))
+-	data := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.dataOffset)))
++	tree := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.treeOffset)))
++	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
++	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
+ 	C.registerResourceData(C.int(r.version), tree, name, data)
+ }
+ 
+@@ -1102,8 +1113,8 @@
+ 	} else if len(r.bdata) > 0 {
+ 		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
+ 	}
+-	tree := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.treeOffset)))
+-	name := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.nameOffset)))
+-	data := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.dataOffset)))
++	tree := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.treeOffset)))
++	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
++	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
+ 	C.unregisterResourceData(C.int(r.version), tree, name, data)
+ }

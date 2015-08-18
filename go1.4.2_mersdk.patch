@@ -1,0 +1,46 @@
+diff -ruN go/src/cmd/ld/lib.c /home/mersdk/go/src/cmd/ld/lib.c
+--- go/src/cmd/ld/lib.c	2015-02-18 04:50:43.000000000 +0000
++++ /home/mersdk/go/src/cmd/ld/lib.c	2015-08-03 11:06:56.630614056 +0000
+@@ -148,7 +148,7 @@
+ 		// For rmtemp run at atexit time on Windows.
+ 		close(cout);
+ 	}
+-	if(nerrors) {
++	if(nerrors > 30) {
+ 		if(cout >= 0)
+ 			mayberemoveoutfile();
+ 		exits("error");
+@@ -1514,7 +1514,7 @@
+ 		undefsym(s);
+ 	for(s = datap; s != nil; s = s->next)
+ 		undefsym(s);
+-	if(nerrors > 0)
++	if(nerrors > 30)
+ 		errorexit();
+ }
+ 
+diff -ruN go/src/runtime/os_linux.h /home/mersdk/go/src/runtime/os_linux.h
+--- go/src/runtime/os_linux.h	2015-02-18 04:50:43.000000000 +0000
++++ /home/mersdk/go/src/runtime/os_linux.h	2015-08-05 10:12:38.926718790 +0000
+@@ -16,7 +16,7 @@
+ 
+ enum {
+ 	SS_DISABLE = 2,
+-	NSIG = 65,
++	NSIG = 64,
+ 	SI_USER = 0,
+ 	SIG_SETMASK = 2,
+ 	RLIMIT_AS = 9,
+diff -ruN go/src/runtime/zruntime_defs_linux_386.go /home/mersdk/go/src/runtime/zruntime_defs_linux_386.go
+--- go/src/runtime/zruntime_defs_linux_386.go	2015-02-18 04:51:26.000000000 +0000
++++ /home/mersdk/go/src/runtime/zruntime_defs_linux_386.go	2015-08-10 11:21:53.859509824 +0000
+@@ -950,7 +950,7 @@
+ }
+ 
+ const _SS_DISABLE = 2
+-const _NSIG = 65
++const _NSIG = 64
+ const _SI_USER = 0
+ const _SIG_SETMASK = 2
+ const _RLIMIT_AS = 9
+
