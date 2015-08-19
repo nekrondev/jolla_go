@@ -119,7 +119,9 @@ printf "${GREEN}Installing GO VIM plugin ...${NOCOLORLF}"
 git clone https://github.com/fatih/vim-go.git ~/.vim/bundle/vim-go
 printf "${GREEN}Installing vim QML syntax plugin ...${NOCOLORLF}"
 git clone https://github.com/peterhoeg/vim-qml.git ~/.vim/bundle/vim-qml
-
+echo "execute pathogen#infect()" >> ~/.vimrc
+echo "syntax on" >> ~/.vimrc
+echo "filetype plugin indent on" >> ~/.vimrc
 export PATH=$PATH:~/go/bin
 
 echo "-----------------------------------------------------------------------"
