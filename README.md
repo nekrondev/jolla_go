@@ -14,3 +14,4 @@ GO runtime has been created:<br>
  - mb2 -t SailfishOS-armv7hl build (will build the ARM RPM for Jolla)
  - ./deploy (Deploy to Emu, you must have Jolla Emu started to do this)
  
+More infos and discussion can be found at https://together.jolla.com/question/105098/how-to-setup-go-142-runtime-and-go-qml-pkg-for-mersdk/
