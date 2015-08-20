@@ -1,9 +1,10 @@
-## Jolla Go 1.4.2 runtime setup for MerSDK
+## Jolla Go 1.4.2 / 1.5 runtime setup for MerSDK
 Quick installation instructions for vanilla MerSDK VM<br>
 - Log into MerSDK VM as mersdk (ssh mersdk@127.0.0.1) (you should add your public/private ssh key to your setup)
 - Clone repository into home by executing git clone https://github.com/nekrondev/jolla_go.git ~/
 - Make sure that setup script is executable chmod +x ./mersdk_jolla_go.sh
 - Launch setup script ./mersdk_jolla_go.sh
+- If you want to upgrade to Go runtime 1.5 execute ./mersdk_jolla_go15_upgrade.sh
 
 After script has launched it will take some time to build the Jolla Go runtime on MerSDK.<br>
 As a bonus I included the world famous dewpoint calculator source. You can compile it by doing the following steps after 
