@@ -83,8 +83,10 @@ printf "${GREEN}Compiling GO for runtime ARM compilation ...${NOCOLORLF}"
 GOOS=linux GOARCH=arm GOARM=7 ./make.bash
 printf "${GREEN}Cross compiling GO for ARM target (needed for CGO package cross compilation)...${NOCOLORLF}"
 cp ~/go/bin/go ~/go/bin/go_i486
+cp ~/go/bin/gofmt ~/go/bin/gofmt_i486
 sb2 -O use-global-tmp -t SailfishOS-armv7hl ./make.bash
 cp ~/go/bin/go_i486 ~/go/bin/go
+cp ~/go/bin/gofmt_i486 ~/go/bin/gofmt
 printf "${GREEN}Go runtime for MerSDK and ARM target prepared successfully.${NOCOLORLF}"
 
 # Creating GO QML bindings
