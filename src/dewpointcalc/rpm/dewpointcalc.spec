@@ -38,7 +38,7 @@ GOPATH=%(pwd):~/
 GOROOT=~/go
 export GOPATH GOROOT
 cd %(pwd)
-if [ DEB_BUILD_ARCH == "armel" ]
+if [ $DEB_HOST_ARCH == "armel" ]
 then
 ~/go/bin/linux_arm/go build -ldflags "-s" -o %{name} 
 else
