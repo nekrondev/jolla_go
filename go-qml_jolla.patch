@@ -1,11 +1,16 @@
 diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
 --- qml-1/bridge.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/bridge.go	2015-08-11 09:23:54.229648403 +0000
-@@ -3,7 +3,7 @@
- // #cgo CPPFLAGS: -I./cpp
- // #cgo CXXFLAGS: -std=c++0x -pedantic-errors -Wall -fno-strict-aliasing
- // #cgo LDFLAGS: -lstdc++
++++ /home/mersdk/src/gopkg.in/qml.v1/bridge.go	2015-08-28 12:05:53.196770755 +0000
+@@ -1,9 +1,9 @@
+ package qml
+ 
+-// #cgo CPPFLAGS: -I./cpp
+-// #cgo CXXFLAGS: -std=c++0x -pedantic-errors -Wall -fno-strict-aliasing
+-// #cgo LDFLAGS: -lstdc++
 -// #cgo pkg-config: Qt5Core Qt5Widgets Qt5Quick
++// #cgo CPPFLAGS: -I./cpp -I/usr/include/sailfishapp
++// #cgo CXXFLAGS: -std=c++0x -Wall -fno-strict-aliasing
++// #cgo LDFLAGS: -lstdc++ -L/usr/lib/ -lsailfishapp -lmdeclarativecache5
 +// #cgo pkg-config: Qt5Core Qt5Quick
  //
  // #include <stdlib.h>
@@ -29,10 +34,58 @@ diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
  
  	initialized int32
  )
-Binary files qml-1/cmd/genqrc/genqrc and /home/mersdk/src/gopkg.in/qml.v1/cmd/genqrc/genqrc differ
+@@ -38,6 +38,33 @@
+ 	guiMainRef = cdata.Ref()
+ }
+ 
++// Special Run() function to launch Jolla SailfishOS applications.
++// Run runs the main QML event loop, runs f, and then terminates the
++// event loop once f returns.
++//
++// Most functions from the qml package block until Run is called.
++//
++// The Run function must necessarily be called from the same goroutine as
++// the main function or the application may fail when running on Mac OS.
++func SailfishRun(f func() error) error {
++	if cdata.Ref() != guiMainRef {
++		panic("Run must be called on the initial goroutine so apps are portable to Mac OS")
++	}
++	if !atomic.CompareAndSwapInt32(&initialized, 0, 1) {
++		panic("qml.Run called more than once")
++	}
++	C.sailfishnewGuiApplication()
++	C.idleTimerInit((*C.int32_t)(&guiIdleRun))
++	done := make(chan error, 1)
++	go func() {
++		RunMain(func() {}) // Block until the event loop is running.
++		done <- f()
++		C.sailfishapplicationExit()
++	}()
++	C.sailfishapplicationExec()
++	return <-done
++}
++
+ // Run runs the main QML event loop, runs f, and then terminates the
+ // event loop once f returns.
+ //
+@@ -117,6 +144,14 @@
+ 	})
+ }
+ 
++// Flush synchronously flushes all pending QML activities for Sailfish application
++func SailfishFlush() {
++	// TODO Better testing for this.
++	RunMain(func() {
++		C.sailfishapplicationFlushAll()
++	})
++}
++
+ // Flush synchronously flushes all pending QML activities.
+ func Flush() {
+ 	// TODO Better testing for this.
 diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
 --- qml-1/cpp/capi.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp	2015-08-14 12:08:31.647399718 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp	2015-08-28 13:52:00.493646622 +0000
 @@ -1,10 +1,14 @@
 -#include <QApplication>
 +#include <QGuiApplication>
@@ -42,18 +95,19 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
  #include <QDebug>
  #include <QQuickImageProvider>
  
-+//#include <sailfishapp.h>
-+//#include <QScopedPointer>
++#include <sailfishapp.h>
++
 +#include <QtCore/QTranslator>
 +
  #include <string.h>
  
  #include "govalue.h"
-@@ -12,6 +16,20 @@
+@@ -12,6 +16,21 @@
  #include "connector.h"
  #include "capi.h"
  
-+//QGuiApplication *app;
++QGuiApplication *app;
++QQuickView *sfview;
 +
 +void newTranslator(QString_ *i18nroot)
 +{
@@ -70,19 +124,115 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
  static char *local_strdup(const char *str)
  {
      char *strcopy = 0;
-@@ -48,7 +66,10 @@
+@@ -43,27 +62,55 @@
+     hookPanic(local_strdup(ba.constData()));
+ }
+ 
++void sailfishnewGuiApplication()
++{
++    static char empty[1] = {0};
++    static char *argv[] = {empty, 0};
++    static int argc = 1;
++
++    app = SailfishApp::application(argc, argv);
++
++    // The event loop should never die.
++    app->setQuitOnLastWindowClosed(false);
++}
++
+ void newGuiApplication()
+ {
      static char empty[1] = {0};
      static char *argv[] = {empty, 0};
      static int argc = 1;
 -    new QApplication(argc, argv);
 +
-+    //QScopedPointer< QGuiApplication > app(SailfishApp::application(argc, argv));
-+    //app = SailfishApp::application(argc, argv);
 +    new QGuiApplication(argc, argv);
  
      // The event loop should never die.
      qApp->setQuitOnLastWindowClosed(false);
-@@ -244,12 +265,43 @@
+ }
+ 
++void sailfishapplicationExec()
++{
++    app->exec();
++}
++
+ void applicationExec()
+ {
+     qApp->exec();
+ }
+ 
++void sailfishapplicationExit()
++{
++    app->exit(0);
++}
++
+ void applicationExit()
+ {
+     qApp->exit(0);
+ }
+ 
++void sailfishapplicationFlushAll()
++{
++    app->processEvents();
++}
++
+ void applicationFlushAll()
+ {
+     qApp->processEvents();
+@@ -79,6 +126,12 @@
+     return QCoreApplication::instance()->thread();
+ }
+ 
++QQmlEngine_ *newSailfishEngine()
++{
++    sfview = SailfishApp::createView();
++    return sfview->engine();
++}
++
+ QQmlEngine_ *newEngine(QObject_ *parent)
+ {
+     return new QQmlEngine(reinterpret_cast<QObject *>(parent));
+@@ -163,6 +216,13 @@
+     qengine->addImageProvider(*qproviderId, new GoImageProvider(imageFunc));
+ }
+ 
++void sailfishSetSource(const char *url, int urlLen)
++{
++    QByteArray qurl(url, urlLen);
++    QString qsurl = QString::fromUtf8(qurl);
++    sfview->setSource(SailfishApp::pathTo(qsurl));
++}
++
+ void componentLoadURL(QQmlComponent_ *component, const char *url, int urlLen)
+ {
+     QByteArray qurl(url, urlLen);
+@@ -202,6 +262,11 @@
+     return qcomponent->create(qcontext);
+ }
+ 
++QQuickWindow_ *sailfishCreateWindow()
++{
++    return sfview;
++}
++
+ QQuickWindow_ *componentCreateWindow(QQmlComponent_ *component, QQmlContext_ *context)
+ {
+     QQmlComponent *qcomponent = reinterpret_cast<QQmlComponent *>(component);
+@@ -229,6 +294,11 @@
+     }
+ };
+ 
++void sailfishwindowShow()
++{
++    sfview->show();
++}
++
+ void windowShow(QQuickWindow_ *win)
+ {
+     reinterpret_cast<DoShowWindow *>(win)->show();
+@@ -244,12 +314,43 @@
      return reinterpret_cast<QQuickWindow *>(win)->winId();
  }
  
@@ -127,7 +277,37 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
          }
      });
  }
-@@ -629,6 +681,9 @@
+@@ -436,7 +537,6 @@
+     if (paramsLen > 10) {
+         panicf("fix the parameter dispatching");
+     }
+-
+     const QMetaObject *metaObject = qobject->metaObject();
+     // Walk backwards so descendants have priority.
+     for (int i = metaObject->methodCount()-1; i >= 0; i--) {
+@@ -452,10 +552,10 @@
+ 
+                 bool ok;
+                 if (metaMethod.returnType() == QMetaType::Void) {
+-                    ok = metaMethod.invoke(qobject, Qt::DirectConnection, 
++                    ok = QMetaObject::invokeMethod(qobject, metaMethod.name(), Qt::DirectConnection, 
+                         arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9]);
+                 } else {
+-                    ok = metaMethod.invoke(qobject, Qt::DirectConnection, Q_RETURN_ARG(QVariant, result),
++                    ok = QMetaObject::invokeMethod(qobject, metaMethod.name(), Qt::DirectConnection, Q_RETURN_ARG(QVariant, result),
+                         arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9]);
+                 }
+                 if (!ok) {
+@@ -475,7 +575,7 @@
+ {
+     QObject *qobject = reinterpret_cast<QObject *>(object);
+     QString *qname = reinterpret_cast<QString *>(name);
+-    
++   
+     QVariant var;
+     QObject *result = qobject->findChild<QObject *>(*qname);
+     if (result) {
+@@ -629,6 +729,9 @@
      case DTColor:
          *qvar = QColor::fromRgba(*(QRgb*)(value->data));
          break;
@@ -137,7 +317,7 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
      case DTVariantList:
          *qvar = **(QVariantList**)(value->data);
          delete *(QVariantList**)(value->data);
-@@ -709,6 +764,21 @@
+@@ -709,6 +812,21 @@
          value->dataType = DTColor;
          *(unsigned int*)(value->data) = qvar->value<QColor>().rgba();
          break;
@@ -161,7 +341,7 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
              QVariantList varlist = qvar->toList();
 diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
 --- qml-1/cpp/capi.h	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h	2015-08-13 15:11:12.109458402 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h	2015-08-28 11:36:26.009816210 +0000
 @@ -49,6 +49,7 @@
      DTFloat64 = 17,
      DTFloat32 = 18,
@@ -170,15 +350,43 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  
      DTGoAddr       = 100,
      DTObject       = 101,
-@@ -116,6 +117,7 @@
+@@ -106,9 +107,13 @@
+ } LogMessage;
+ 
+ void newGuiApplication();
++void sailfishnewGuiApplication();
+ void applicationExec();
++void sailfishapplicationExec();
+ void applicationExit();
++void sailfishapplicationExit();
+ void applicationFlushAll();
++void sailfishapplicationFlushAll();
+ 
+ void idleTimerInit(int32_t *guiIdleRun);
+ void idleTimerStart();
+@@ -116,7 +121,9 @@
  void *currentThread();
  void *appThread();
  
 +void newTranslator(QString_ *translatorRoot);
  QQmlEngine_ *newEngine(QObject_ *parent);
++QQmlEngine_ *newSailfishEngine();
  QQmlContext_ *engineRootContext(QQmlEngine_ *engine);
  void engineSetOwnershipCPP(QQmlEngine_ *engine, QObject_ *object);
-@@ -154,6 +156,7 @@
+ void engineSetOwnershipJS(QQmlEngine_ *engine, QObject_ *object);
+@@ -145,15 +152,19 @@
+ 
+ QQmlComponent_ *newComponent(QQmlEngine_ *engine, QObject_ *parent);
+ void componentLoadURL(QQmlComponent_ *component, const char *url, int urlLen);
++void sailfishSetSource(const char *url, int urlLen);
+ void componentSetData(QQmlComponent_ *component, const char *data, int dataLen, const char *url, int urlLen);
+ char *componentErrorString(QQmlComponent_ *component);
+ QObject_ *componentCreate(QQmlComponent_ *component, QQmlContext_ *context);
+ QQuickWindow_ *componentCreateWindow(QQmlComponent_ *component, QQmlContext_ *context);
++QQuickWindow_ *sailfishCreateWindow();
+ 
+ void windowShow(QQuickWindow_ *win);
++void sailfishwindowShow();
  void windowHide(QQuickWindow_ *win);
  uintptr_t windowPlatformId(QQuickWindow_ *win);
  void windowConnectHidden(QQuickWindow_ *win);
@@ -188,7 +396,7 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  
 diff -ruN qml-1/cpp/moc_all.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp
 --- qml-1/cpp/moc_all.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp	2015-08-10 10:23:01.937702555 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp	2015-08-18 15:32:12.272818905 +0000
 @@ -1,4 +1,5 @@
  // This file is automatically generated by cpp/update-moc.sh
 +#include "cpp/moc_capi.cpp"
@@ -197,7 +405,7 @@ diff -ruN qml-1/cpp/moc_all.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp
  #include "cpp/moc_idletimer.cpp"
 diff -ruN qml-1/cpp/moc_capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp
 --- qml-1/cpp/moc_capi.cpp	1970-01-01 00:00:00.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp	2015-08-10 10:23:01.905702523 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp	2015-08-18 15:32:12.272818905 +0000
 @@ -0,0 +1,87 @@
 +/****************************************************************************
 +** Meta object code from reading C++ file 'capi.cpp'
@@ -288,7 +496,7 @@ diff -ruN qml-1/cpp/moc_capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.c
 +QT_END_MOC_NAMESPACE
 diff -ruN qml-1/cpp/moc_connector.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp
 --- qml-1/cpp/moc_connector.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp	2015-08-10 10:23:01.915702533 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp	2015-08-18 15:32:12.272818905 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'connector.h'
@@ -309,7 +517,7 @@ diff -ruN qml-1/cpp/moc_connector.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_c
  #endif
 diff -ruN qml-1/cpp/moc_govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp
 --- qml-1/cpp/moc_govalue.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp	2015-08-10 10:23:01.926702544 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp	2015-08-18 15:32:12.272818905 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'govalue.h'
@@ -330,7 +538,7 @@ diff -ruN qml-1/cpp/moc_govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_gov
  #endif
 diff -ruN qml-1/cpp/moc_idletimer.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp
 --- qml-1/cpp/moc_idletimer.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp	2015-08-10 10:23:01.937702555 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp	2015-08-18 15:32:12.273818906 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'idletimer.cpp'
@@ -351,7 +559,7 @@ diff -ruN qml-1/cpp/moc_idletimer.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_i
  #endif
 diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
 --- qml-1/datatype.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/datatype.go	2015-08-14 13:06:03.408788095 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/datatype.go	2015-08-18 15:32:12.274818907 +0000
 @@ -10,6 +10,7 @@
  	"image/color"
  	"reflect"
@@ -399,8 +607,57 @@ diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
  	}
 diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
 --- qml-1/qml.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/qml.go	2015-08-13 15:09:29.595465898 +0000
-@@ -241,6 +241,15 @@
++++ /home/mersdk/src/gopkg.in/qml.v1/qml.go	2015-08-28 13:52:11.553648032 +0000
+@@ -33,6 +33,22 @@
+ 
+ var engines = make(map[unsafe.Pointer]*Engine)
+ 
++// NewSailfishEngine returns a new Sailfish QML engine.
++//
++// The Destory method must be called to finalize the engine and
++// release any resources used.
++func SailfishNewEngine() *Engine {
++	engine := &Engine{values: make(map[interface{}]*valueFold)}
++	RunMain(func() {
++		engine.addr = C.newSailfishEngine()
++		engine.engine = engine
++		engine.imageProviders = make(map[string]*func(imageId string, width, height int) image.Image)
++		engines[engine.addr] = engine
++		stats.enginesAlive(+1)
++	})
++	return engine
++}
++
+ // NewEngine returns a new QML engine.
+ //
+ // The Destory method must be called to finalize the engine and
+@@ -124,7 +140,7 @@
+ 	cloc, cloclen := unsafeStringData(location)
+ 	comp := &Common{engine: e}
+ 	RunMain(func() {
+-		// TODO The component's parent should probably be the engine.
++		//TODO The component's parent should probably be the engine.
+ 		comp.addr = C.newComponent(e.addr, nilPtr)
+ 		if qrc {
+ 			C.componentLoadURL(comp.addr, cloc, cloclen)
+@@ -143,6 +159,16 @@
+ 	return comp, nil
+ }
+ 
++// Set the Sailfish applications view source to the given QML file from the applications
++// root shared folder.
++func (e *Engine) SailfishSetSource(path string) (Object, error) {
++	cloc, cloclen := unsafeStringData(path)
++	RunMain(func() {
++		C.sailfishSetSource(cloc, cloclen)
++	})
++	return &Common{engine: e}, nil
++}
++
+ // LoadFile loads a component from the provided QML file.
+ // Resources referenced by the QML content will be resolved relative to its path.
+ //
+@@ -241,6 +267,15 @@
  	})
  }
  
@@ -416,7 +673,54 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  //export hookRequestImage
  func hookRequestImage(imageFunc unsafe.Pointer, cid *C.char, cidLen, cwidth, cheight C.int) unsafe.Pointer {
  	f := *(*func(imgId string, width, height int) image.Image)(imageFunc)
-@@ -903,9 +912,11 @@
+@@ -368,6 +403,7 @@
+ 	Call(method string, params ...interface{}) interface{}
+ 	Create(ctx *Context) Object
+ 	CreateWindow(ctx *Context) *Window
++	SailfishCreateWindow() *Window
+ 	Destroy()
+ 	On(signal string, function interface{})
+ }
+@@ -700,6 +736,7 @@
+ 	RunMain(func() {
+ 		for i, param := range params {
+ 			packDataValue(param, &dataValueArray[i], obj.engine, jsOwner)
++			fmt.Printf("Call() %v\n", &dataValueArray[0])
+ 		}
+ 		cerr = C.objectInvoke(obj.addr, cmethod, cmethodLen, &result, &dataValueArray[0], C.int(len(params)))
+ 	})
+@@ -729,6 +766,16 @@
+ 	return &root
+ }
+ 
++// Returns a window structure for Sailfish application QQuickView
++func (obj *Common) SailfishCreateWindow() *Window {
++	var win Window
++	win.engine = obj.engine
++	RunMain(func() {
++		win.addr = C.sailfishCreateWindow()
++	})
++	return &win
++}
++
+ // CreateWindow creates a new instance of the component held by obj,
+ // and creates a new window holding the instance as its root object.
+ // The component instance runs under the ctx context. If ctx is nil,
+@@ -859,6 +906,13 @@
+ 	Common
+ }
+ 
++// Show exposes the Sailfish application window.
++func (win *Window) SailfishShow() {
++	RunMain(func() {
++		C.sailfishwindowShow()
++	})
++}
++
+ // Show exposes the window.
+ func (win *Window) Show() {
+ 	RunMain(func() {
+@@ -903,9 +957,11 @@
  	var m sync.Mutex
  	m.Lock()
  	RunMain(func() {
@@ -429,7 +733,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  		C.windowConnectHidden(win.addr)
  	})
  	m.Lock()
-@@ -1088,9 +1099,9 @@
+@@ -1088,9 +1144,9 @@
  	} else if len(r.bdata) > 0 {
  		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
  	}
@@ -442,7 +746,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  	C.registerResourceData(C.int(r.version), tree, name, data)
  }
  
-@@ -1102,8 +1113,8 @@
+@@ -1102,8 +1158,8 @@
  	} else if len(r.bdata) > 0 {
  		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
  	}
@@ -453,4 +757,4 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
 +	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
 +	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
  	C.unregisterResourceData(C.int(r.version), tree, name, data)
- }
+ } 
