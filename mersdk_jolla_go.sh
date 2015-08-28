@@ -93,7 +93,7 @@ printf "${GREEN}Go runtime for MerSDK and ARM target prepared successfully.${NOC
 printf "${GREEN}Creating GO QML package for Jolla ...\n"
 printf "Installing needed MerSDK zypper packages ...${NOCOLORLF}"
 sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install qt5-qtcore-devel qt5-qtdeclarative-qtquick-devel qt5-qtopengl-devel
-sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper install -t pattern "sailfish-silica-devel"
+sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install -t pattern "sailfish-silica-devel"
 cd ~/downloads
 curl -O -L https://github.com/go-qml/qml/archive/v1.zip
 mkdir -p ~/src/gopkg.in
