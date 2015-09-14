@@ -20,7 +20,7 @@ NOCOLORLF='\033[0m\n'
 # Intro
 printf "\n${GREEN}Jolla MerSDK GO 1.4.2 runtime installer by Nekron\n"
 printf "=================================================\n"
-printf "This installer will prepare GO runtime on a vanilla Jolla-1.1.6.27 SDK\n"
+printf "This installer will prepare GO runtime on a vanilla Jolla-1.1.7.28 (1507) SDK\n"
 printf "After installation has been completed you will find GO runtime installed into your mersdk home's root directory.\n"
 printf "Compilation of Jolla applications for emulator will be done from MerSDK and not SailfishOS-i486 target, i.e.\n"
 printf "you can build your applications without sb2 -t SailfishOS-i486 command. However if you finally cross-compile to\n"
@@ -58,7 +58,7 @@ bunzip2 qemu-2.3.0.tar.bz2
 tar xfv qemu-2.3.0.tar
 cd qemu-2.3.0
 printf "${GREEN}Installing additional dependencies for QEMU compilation ...${NOCOLORLF}"
-sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install libtool zlib-devel glib2-devel
+sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install libtool zlib-devel glib2-devel flex bison
 printf "${GREEN}Compiling and installing QEMU 2.3.0 ...${NOCOLORLF}"
 ./configure --target-list=arm-softmmu,arm-linux-user
 make & sudo make install
