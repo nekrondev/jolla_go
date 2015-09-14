@@ -1,8 +1,10 @@
 ## Jolla Go 1.4.2 / 1.5 runtime setup for MerSDK
 Quick installation instructions for vanilla MerSDK VM<br>
 - Log into MerSDK VM as mersdk (ssh mersdk@127.0.0.1) (you should add your public/private ssh key to your setup)
-- Clone repository into home by executing git clone https://github.com/nekrondev/jolla_go.git ~/
+- Clone repository into home by executing git clone https://github.com/nekrondev/jolla_go.git ~/tmp
+- Copy content to ~/tmp/ into your home folder mv ~/tmp/ ~/
 - Make sure that setup script is executable chmod +x ./mersdk_jolla_go.sh
+- Make sure that update script for Go 1.5 is executable chmod +x ./mersdk_jolla_go15_upgrade.sh
 - Launch setup script ./mersdk_jolla_go.sh
 - If you want to upgrade to Go runtime 1.5 execute ./mersdk_jolla_go15_upgrade.sh
 
@@ -16,3 +18,5 @@ GO runtime has been created:<br>
  - ./deploy (Deploy to Emu, you must have Jolla Emu started to do this)
  
 More infos and discussion can be found at https://together.jolla.com/question/105098/how-to-setup-go-142-runtime-and-go-qml-pkg-for-mersdk/
+
+Installation and compilation will take approx. 30 - 60 mins depending on your hardware.
