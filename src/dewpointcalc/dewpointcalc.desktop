@@ -2,7 +2,7 @@
 Encoding=UTF-8
 Version=1.0
 Type=Application
-X-Nemo-Application-Type=generic
+X-Nemo-Application-Type=no-invoker
 Name=Dewpoint calculator
 Icon=harbour-dewpointcalc
 Exec=harbour-dewpointcalc

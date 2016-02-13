@@ -36,7 +36,7 @@ type Config struct {
 }
 
 func main() {
-	if err := qml.Run(run); err != nil {
+	if err := qml.SailfishRun(run); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -115,18 +115,18 @@ func run() error {
 	//dewpoint.Root.ObjectByName("humidityslider").Set("value", config.HumOnClose)
 	dewpoint.Lastcalctime = config.LastRun
 
-	engine := qml.NewEngine()
+	engine := qml.SailfishNewEngine()
 	engine.Translator("/usr/share/harbour-dewpointcalc/qml/i18n")
 
 	//dewpoint := DewpointControl{Dewpoint: "", Humidity: "", Temperature: ""}
 	context := engine.Context()
 	context.SetVar("dewpointctrl", &dewpoint)
-	controls, err := engine.LoadFile("/usr/share/harbour-dewpointcalc/qml/main.qml")
+	controls, err := engine.SailfishSetSource("qml/main.qml")
 	if err != nil {
 		return err
 	}
 
-	window := controls.CreateWindow(nil)
+	window := controls.SailfishCreateWindow()
 	dewpoint.Root = window.Root()
 
 	err = loadSettings()
@@ -146,7 +146,7 @@ func run() error {
 	dewpoint.Root.ObjectByName("tempslider").Set("value", config.TempOnClose)
 	dewpoint.Root.ObjectByName("humidityslider").Set("value", config.HumOnClose)
 	//dewpoint.Lastcalctime = config.LastRun
-	window.Show()
+	window.SailfishShow()
 	window.Wait()
 
 	config.TempOnClose = dewpoint.temp
