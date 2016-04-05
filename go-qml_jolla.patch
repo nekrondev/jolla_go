@@ -1,6 +1,6 @@
 diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
 --- qml-1/bridge.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/bridge.go	2015-09-14 12:31:14.908063913 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/bridge.go	2016-04-05 13:16:40.219952082 +0000
 @@ -1,9 +1,9 @@
  package qml
  
@@ -34,10 +34,15 @@ diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
  
  	initialized int32
  )
-@@ -38,6 +38,33 @@
+@@ -38,6 +38,38 @@
  	guiMainRef = cdata.Ref()
  }
  
++// foldRefs holds all fold values that are created. Since Go Pointer
++// are not allowed to be held by cgo. We need a lookup table to
++// interface the two space.
++var foldRefs = make(map[uintptr]*valueFold)
++
 +// Special Run() function to launch Jolla SailfishOS applications.
 +// Run runs the main QML event loop, runs f, and then terminates the
 +// event loop once f returns.
@@ -68,7 +73,7 @@ diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
  // Run runs the main QML event loop, runs f, and then terminates the
  // event loop once f returns.
  //
-@@ -117,6 +144,14 @@
+@@ -117,6 +149,14 @@
  	})
  }
  
@@ -83,9 +88,176 @@ diff -ruN qml-1/bridge.go /home/mersdk/src/gopkg.in/qml.v1/bridge.go
  // Flush synchronously flushes all pending QML activities.
  func Flush() {
  	// TODO Better testing for this.
+@@ -210,6 +250,16 @@
+ 	jsOwner
+ )
+ 
++func storeFold(fold *valueFold) C.GoRef {
++	foldRef := uintptr(unsafe.Pointer(fold))
++	foldRefs[foldRef] = fold
++	return C.GoRef(foldRef)
++}
++
++func restoreFold(ref uintptr) *valueFold {
++	return foldRefs[ref]
++}
++
+ // wrapGoValue creates a new GoValue object in C++ land wrapping
+ // the Go value contained in the given interface.
+ //
+@@ -251,7 +301,7 @@
+ 		gvalue: gvalue,
+ 		owner:  owner,
+ 	}
+-	fold.cvalue = C.newGoValue(unsafe.Pointer(fold), typeInfo(gvalue), parent)
++	fold.cvalue = C.newGoValue(storeFold(fold), typeInfo(gvalue), parent)
+ 	if prev != nil {
+ 		// Put new fold first so the single cppOwner, if any, is always the first entry.
+ 		fold.next = prev
+@@ -289,7 +339,7 @@
+ var typeNew = make(map[*valueFold]bool)
+ 
+ //export hookGoValueTypeNew
+-func hookGoValueTypeNew(cvalue unsafe.Pointer, specp unsafe.Pointer) (foldp unsafe.Pointer) {
++func hookGoValueTypeNew(cvalue unsafe.Pointer, specp unsafe.Pointer) (foldr C.GoRef) {
+ 	// Initialization is postponed until the engine is available, so that
+ 	// we can hand Init the qml.Object that represents the object.
+ 	init := reflect.ValueOf((*TypeSpec)(specp).Init)
+@@ -299,15 +349,17 @@
+ 		cvalue: cvalue,
+ 		owner:  jsOwner,
+ 	}
++
+ 	typeNew[fold] = true
+ 	//fmt.Printf("[DEBUG] value alive (type-created): cvalue=%x gvalue=%x/%#v\n", fold.cvalue, addrOf(fold.gvalue), fold.gvalue)
+ 	stats.valuesAlive(+1)
+-	return unsafe.Pointer(fold)
++	return storeFold(fold)
+ }
+ 
+ //export hookGoValueDestroyed
+-func hookGoValueDestroyed(enginep unsafe.Pointer, foldp unsafe.Pointer) {
+-	fold := (*valueFold)(foldp)
++func hookGoValueDestroyed(enginep unsafe.Pointer, foldr uintptr) {
++	fold := restoreFold(foldr)
++
+ 	engine := fold.engine
+ 	if engine == nil {
+ 		before := len(typeNew)
+@@ -360,8 +412,8 @@
+ }
+ 
+ //export hookGoValueReadField
+-func hookGoValueReadField(enginep, foldp unsafe.Pointer, reflectIndex, getIndex, setIndex C.int, resultdv *C.DataValue) {
+-	fold := ensureEngine(enginep, foldp)
++func hookGoValueReadField(enginep unsafe.Pointer, foldr uintptr, reflectIndex, getIndex, setIndex C.int, resultdv *C.DataValue) {
++	fold := ensureEngine(enginep, foldr)
+ 
+ 	var field reflect.Value
+ 	if getIndex >= 0 {
+@@ -376,7 +428,7 @@
+ 		// TODO Handle getters that return []qml.Object.
+ 		// TODO Handle other GoValue slices (!= []qml.Object).
+ 		resultdv.dataType = C.DTListProperty
+-		*(*unsafe.Pointer)(unsafe.Pointer(&resultdv.data)) = C.newListProperty(foldp, C.intptr_t(reflectIndex), C.intptr_t(setIndex))
++		*(*unsafe.Pointer)(unsafe.Pointer(&resultdv.data)) = C.newListProperty(C.GoRef(foldr), C.intptr_t(reflectIndex), C.intptr_t(setIndex))
+ 		return
+ 	}
+ 
+@@ -406,8 +458,8 @@
+ }
+ 
+ //export hookGoValueWriteField
+-func hookGoValueWriteField(enginep, foldp unsafe.Pointer, reflectIndex, setIndex C.int, assigndv *C.DataValue) {
+-	fold := ensureEngine(enginep, foldp)
++func hookGoValueWriteField(enginep unsafe.Pointer, foldr uintptr, reflectIndex, setIndex C.int, assigndv *C.DataValue) {
++	fold := ensureEngine(enginep, foldr)
+ 	v := reflect.ValueOf(fold.gvalue)
+ 	ve := v
+ 	for ve.Type().Kind() == reflect.Ptr {
+@@ -483,8 +535,8 @@
+ )
+ 
+ //export hookGoValueCallMethod
+-func hookGoValueCallMethod(enginep, foldp unsafe.Pointer, reflectIndex C.int, args *C.DataValue) {
+-	fold := ensureEngine(enginep, foldp)
++func hookGoValueCallMethod(enginep unsafe.Pointer, foldr uintptr, reflectIndex C.int, args *C.DataValue) {
++	fold := ensureEngine(enginep, foldr)
+ 	v := reflect.ValueOf(fold.gvalue)
+ 
+ 	// TODO Must assert that v is necessarily a pointer here, but we shouldn't have to manipulate
+@@ -548,7 +600,7 @@
+ }
+ 
+ //export hookGoValuePaint
+-func hookGoValuePaint(enginep, foldp unsafe.Pointer, reflectIndex C.intptr_t) {
++func hookGoValuePaint(enginep unsafe.Pointer, foldr uintptr, reflectIndex C.intptr_t) {
+ 	// Besides a convenience this is a workaround for http://golang.org/issue/8588
+ 	defer printPaintPanic()
+ 	defer atomic.StoreUintptr(&guiPaintRef, 0)
+@@ -557,7 +609,7 @@
+ 	// so no two paintings should be happening at the same time.
+ 	atomic.StoreUintptr(&guiPaintRef, cdata.Ref())
+ 
+-	fold := ensureEngine(enginep, foldp)
++	fold := ensureEngine(enginep, foldr)
+ 	if fold.init.IsValid() {
+ 		return
+ 	}
+@@ -568,8 +620,8 @@
+ 	method.Call([]reflect.Value{reflect.ValueOf(painter)})
+ }
+ 
+-func ensureEngine(enginep, foldp unsafe.Pointer) *valueFold {
+-	fold := (*valueFold)(foldp)
++func ensureEngine(enginep unsafe.Pointer, foldr uintptr) *valueFold {
++	fold := restoreFold(foldr)
+ 	if fold.engine != nil {
+ 		if fold.init.IsValid() {
+ 			initGoType(fold)
+@@ -637,22 +689,22 @@
+ }
+ 
+ //export hookListPropertyAt
+-func hookListPropertyAt(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t, index C.int) (objp unsafe.Pointer) {
+-	fold := (*valueFold)(foldp)
++func hookListPropertyAt(foldr uintptr, reflectIndex, setIndex C.intptr_t, index C.int) (objp unsafe.Pointer) {
++	fold := restoreFold(foldr)
+ 	slice := listSlice(fold, reflectIndex)
+ 	return (*slice)[int(index)].Common().addr
+ }
+ 
+ //export hookListPropertyCount
+-func hookListPropertyCount(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t) C.int {
+-	fold := (*valueFold)(foldp)
++func hookListPropertyCount(foldr uintptr, reflectIndex, setIndex C.intptr_t) C.int {
++	fold := restoreFold(foldr)
+ 	slice := listSlice(fold, reflectIndex)
+ 	return C.int(len(*slice))
+ }
+ 
+ //export hookListPropertyAppend
+-func hookListPropertyAppend(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t, objp unsafe.Pointer) {
+-	fold := (*valueFold)(foldp)
++func hookListPropertyAppend(foldr uintptr, reflectIndex, setIndex C.intptr_t, objp unsafe.Pointer) {
++	fold := restoreFold(foldr)
+ 	slice := listSlice(fold, reflectIndex)
+ 	var objdv C.DataValue
+ 	objdv.dataType = C.DTObject
+@@ -666,8 +718,8 @@
+ }
+ 
+ //export hookListPropertyClear
+-func hookListPropertyClear(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t) {
+-	fold := (*valueFold)(foldp)
++func hookListPropertyClear(foldr uintptr, reflectIndex, setIndex C.intptr_t) {
++	fold := restoreFold(foldr)
+ 	slice := listSlice(fold, reflectIndex)
+ 	newslice := (*slice)[0:0]
+ 	if setIndex >= 0 {
 diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
 --- qml-1/cpp/capi.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp	2015-09-28 13:14:02.187407610 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp	2016-04-05 12:53:20.650583203 +0000
 @@ -1,10 +1,14 @@
 -#include <QApplication>
 +#include <QGuiApplication>
@@ -316,6 +488,44 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
      QVariant var;
      QObject *result = qobject->findChild<QObject *>(*qname);
      if (result) {
+@@ -543,17 +643,17 @@
+     return dynamic_cast<QQuickView *>(qobject) ? 1 : 0;
+ }
+ 
+-error *objectGoAddr(QObject_ *object, GoAddr **addr)
++error *objectGoRef(QObject_ *object, GoRef *ref)
+ {
+     QObject *qobject = static_cast<QObject *>(object);
+     GoValue *goValue = dynamic_cast<GoValue *>(qobject);
+     if (goValue) {
+-        *addr = goValue->addr;
++        *ref = goValue->ref;
+         return 0;
+     }
+     GoPaintedValue *goPaintedValue = dynamic_cast<GoPaintedValue *>(qobject);
+     if (goPaintedValue) {
+-        *addr = goPaintedValue->addr;
++        *ref= goPaintedValue->ref;
+         return 0;
+     }
+     return errorf("QML object is not backed by a Go value");
+@@ -571,13 +671,13 @@
+     delete reinterpret_cast<QString *>(s);
+ }
+ 
+-GoValue_ *newGoValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject_ *parent)
++GoValue_ *newGoValue(GoRef ref, GoTypeInfo *typeInfo, QObject_ *parent)
+ {
+     QObject *qparent = reinterpret_cast<QObject *>(parent);
+     if (typeInfo->paint) {
+-        return new GoPaintedValue(addr, typeInfo, qparent);
++        return new GoPaintedValue(ref, typeInfo, qparent);
+     }
+-    return new GoValue(addr, typeInfo, qparent);
++    return new GoValue(ref, typeInfo, qparent);
+ }
+ 
+ void goValueActivate(GoValue_ *value, GoTypeInfo *typeInfo, int addrOffset)
 @@ -629,6 +729,9 @@
      case DTColor:
          *qvar = QColor::fromRgba(*(QRgb*)(value->data));
@@ -348,10 +558,69 @@ diff -ruN qml-1/cpp/capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.cpp
      case QMetaType::QVariantList:
          {
              QVariantList varlist = qvar->toList();
+@@ -749,13 +867,13 @@
+             GoValue *goValue = dynamic_cast<GoValue *>(qobject);
+             if (goValue) {
+                 value->dataType = DTGoAddr;
+-                *(void **)(value->data) = goValue->addr;
++                *(uintptr_t*)(value->data) = goValue->ref;
+                 break;
+             }
+             GoPaintedValue *goPaintedValue = dynamic_cast<GoPaintedValue *>(qobject);
+             if (goPaintedValue) {
+                 value->dataType = DTGoAddr;
+-                *(void **)(value->data) = goPaintedValue->addr;
++                *(uintptr_t*)(value->data) = goPaintedValue->ref;
+                 break;
+             }
+             value->dataType = DTObject;
+@@ -813,28 +931,28 @@
+ 
+ QObject *listPropertyAt(QQmlListProperty<QObject> *list, int i)
+ {
+-    return reinterpret_cast<QObject *>(hookListPropertyAt(list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2, i));
++    return reinterpret_cast<QObject *>(hookListPropertyAt((uintptr_t)list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2, i));
+ }
+ 
+ int listPropertyCount(QQmlListProperty<QObject> *list)
+ {
+-    return hookListPropertyCount(list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2);
++    return hookListPropertyCount((uintptr_t)list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2);
+ }
+ 
+ void listPropertyAppend(QQmlListProperty<QObject> *list, QObject *obj)
+ {
+-    hookListPropertyAppend(list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2, obj);
++    hookListPropertyAppend((uintptr_t)list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2, obj);
+ }
+ 
+ void listPropertyClear(QQmlListProperty<QObject> *list)
+ {
+-    hookListPropertyClear(list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2);
++    hookListPropertyClear((uintptr_t)list->data, (intptr_t)list->dummy1, (intptr_t)list->dummy2);
+ }
+ 
+-QQmlListProperty_ *newListProperty(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex)
++QQmlListProperty_ *newListProperty(GoRef ref, intptr_t reflectIndex, intptr_t setIndex)
+ {
+     QQmlListProperty<QObject> *list = new QQmlListProperty<QObject>();
+-    list->data = addr;
++    list->data = (void*)ref;
+     list->dummy1 = (void*)reflectIndex;
+     list->dummy2 = (void*)setIndex;
+     list->at = listPropertyAt;
 diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
 --- qml-1/cpp/capi.h	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h	2015-09-14 12:31:14.909063916 +0000
-@@ -49,6 +49,7 @@
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h	2016-04-05 12:53:20.649583202 +0000
+@@ -29,6 +29,7 @@
+ typedef void QImage_;
+ typedef void GoValue_;
+ typedef void GoAddr;
++typedef uintptr_t GoRef;
+ typedef void GoTypeSpec_;
+ 
+ typedef char error;
+@@ -49,6 +50,7 @@
      DTFloat64 = 17,
      DTFloat32 = 18,
      DTColor   = 19,
@@ -359,7 +628,7 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  
      DTGoAddr       = 100,
      DTObject       = 101,
-@@ -106,9 +107,13 @@
+@@ -106,9 +108,13 @@
  } LogMessage;
  
  void newGuiApplication();
@@ -373,7 +642,7 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  
  void idleTimerInit(int32_t *guiIdleRun);
  void idleTimerStart();
-@@ -116,7 +121,9 @@
+@@ -116,7 +122,9 @@
  void *currentThread();
  void *appThread();
  
@@ -383,7 +652,12 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  QQmlContext_ *engineRootContext(QQmlEngine_ *engine);
  void engineSetOwnershipCPP(QQmlEngine_ *engine, QObject_ *object);
  void engineSetOwnershipJS(QQmlEngine_ *engine, QObject_ *object);
-@@ -145,15 +152,19 @@
+@@ -141,19 +149,23 @@
+ int objectIsWindow(QObject_ *object);
+ int objectIsView(QObject_ *object);
+ error *objectConnect(QObject_ *object, const char *signal, int signalLen, QQmlEngine_ *engine, void *func, int argsLen);
+-error *objectGoAddr(QObject_ *object, GoAddr **addr);
++error *objectGoRef(QObject_ *object, GoRef *ref);
  
  QQmlComponent_ *newComponent(QQmlEngine_ *engine, QObject_ *parent);
  void componentLoadURL(QQmlComponent_ *component, const char *url, int urlLen);
@@ -403,9 +677,196 @@ diff -ruN qml-1/cpp/capi.h /home/mersdk/src/gopkg.in/qml.v1/cpp/capi.h
  QObject_ *windowRootObject(QQuickWindow_ *win);
  QImage_ *windowGrabWindow(QQuickWindow_ *win);
  
+@@ -166,7 +178,7 @@
+ QString_ *newString(const char *data, int len);
+ void delString(QString_ *s);
+ 
+-GoValue_ *newGoValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject_ *parent);
++GoValue_ *newGoValue(GoRef ref, GoTypeInfo *typeInfo, QObject_ *parent);
+ void goValueActivate(GoValue_ *value, GoTypeInfo *typeInfo, int addrOffset);
+ 
+ void packDataValue(QVariant_ *var, DataValue *result);
+@@ -174,7 +186,7 @@
+ 
+ QVariantList_ *newVariantList(DataValue *list, int len);
+ 
+-QQmlListProperty_ *newListProperty(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
++QQmlListProperty_ *newListProperty(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
+ 
+ int registerType(char *location, int major, int minor, char *name, GoTypeInfo *typeInfo, GoTypeSpec_ *spec);
+ int registerSingleton(char *location, int major, int minor, char *name, GoTypeInfo *typeInfo, GoTypeSpec_ *spec);
+@@ -183,21 +195,21 @@
+ 
+ void hookIdleTimer();
+ void hookLogHandler(LogMessage *message);
+-void hookGoValueReadField(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, int getIndex, int setIndex, DataValue *result);
+-void hookGoValueWriteField(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, int setIndex, DataValue *assign);
+-void hookGoValueCallMethod(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, DataValue *result);
+-void hookGoValueDestroyed(QQmlEngine_ *engine, GoAddr *addr);
+-void hookGoValuePaint(QQmlEngine_ *engine, GoAddr *addr, intptr_t reflextIndex);
++void hookGoValueReadField(QQmlEngine_ *engine, GoRef ref, int memberIndex, int getIndex, int setIndex, DataValue *result);
++void hookGoValueWriteField(QQmlEngine_ *engine, GoRef ref, int memberIndex, int setIndex, DataValue *assign);
++void hookGoValueCallMethod(QQmlEngine_ *engine, GoRef ref, int memberIndex, DataValue *result);
++void hookGoValueDestroyed(QQmlEngine_ *engine, GoRef ref);
++void hookGoValuePaint(QQmlEngine_ *engine, GoRef ref, intptr_t reflextIndex);
+ QImage_ *hookRequestImage(void *imageFunc, char *id, int idLen, int width, int height);
+-GoAddr *hookGoValueTypeNew(GoValue_ *value, GoTypeSpec_ *spec);
++uintptr_t hookGoValueTypeNew(GoValue_ *value, GoTypeSpec_ *spec);
+ void hookWindowHidden(QObject_ *addr);
+ void hookSignalCall(QQmlEngine_ *engine, void *func, DataValue *params);
+ void hookSignalDisconnect(void *func);
+ void hookPanic(char *message);
+-int hookListPropertyCount(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
+-QObject_ *hookListPropertyAt(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex, int i);
+-void hookListPropertyAppend(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex, QObject_ *obj);
+-void hookListPropertyClear(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
++int hookListPropertyCount(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
++QObject_ *hookListPropertyAt(GoRef ref, intptr_t reflectIndex, intptr_t setIndex, int i);
++void hookListPropertyAppend(GoRef ref, intptr_t reflectIndex, intptr_t setIndex, QObject_ *obj);
++void hookListPropertyClear(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
+ 
+ void registerResourceData(int version, char *tree, char *name, char *data);
+ void unregisterResourceData(int version, char *tree, char *name, char *data);
+diff -ruN qml-1/cpp/govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/govalue.cpp
+--- qml-1/cpp/govalue.cpp	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/govalue.cpp	2016-04-05 12:53:20.662583214 +0000
+@@ -13,7 +13,7 @@
+ class GoValueMetaObject : public QAbstractDynamicMetaObject
+ {
+ public:
+-    GoValueMetaObject(QObject* value, GoAddr *addr, GoTypeInfo *typeInfo);
++    GoValueMetaObject(QObject* value, GoRef ref, GoTypeInfo *typeInfo);
+ 
+     void activatePropIndex(int propIndex);
+ 
+@@ -22,12 +22,12 @@
+ 
+ private:
+     QObject *value;
+-    GoAddr *addr;
++    GoRef ref;
+     GoTypeInfo *typeInfo;
+ };
+ 
+-GoValueMetaObject::GoValueMetaObject(QObject *value, GoAddr *addr, GoTypeInfo *typeInfo)
+-    : value(value), addr(addr), typeInfo(typeInfo)
++GoValueMetaObject::GoValueMetaObject(QObject *value, GoRef ref, GoTypeInfo *typeInfo)
++    : value(value), ref(ref), typeInfo(typeInfo)
+ {
+     //d->parent = static_cast<QAbstractDynamicMetaObject *>(priv->metaObject);
+     *static_cast<QMetaObject *>(this) = *metaObjectFor(typeInfo);
+@@ -53,7 +53,7 @@
+                 if (memberInfo->metaIndex == idx) {
+                     if (c == QMetaObject::ReadProperty) {
+                         DataValue result;
+-                        hookGoValueReadField(qmlEngine(value), addr, memberInfo->reflectIndex, memberInfo->reflectGetIndex, memberInfo->reflectSetIndex, &result);
++                        hookGoValueReadField(qmlEngine(value), ref, memberInfo->reflectIndex, memberInfo->reflectGetIndex, memberInfo->reflectSetIndex, &result);
+                         if (memberInfo->memberType == DTListProperty) {
+                             if (result.dataType != DTListProperty) {
+                                 panicf("reading DTListProperty field returned non-DTListProperty result");
+@@ -71,7 +71,7 @@
+                         DataValue assign;
+                         QVariant *in = reinterpret_cast<QVariant *>(a[0]);
+                         packDataValue(in, &assign);
+-                        hookGoValueWriteField(qmlEngine(value), addr, memberInfo->reflectIndex, memberInfo->reflectSetIndex, &assign);
++                        hookGoValueWriteField(qmlEngine(value), ref, memberInfo->reflectIndex, memberInfo->reflectSetIndex, &assign);
+                         activate(value, methodOffset() + (idx - propOffset), 0);
+                     }
+                     return -1;
+@@ -95,7 +95,7 @@
+                     for (int i = 1; i < memberInfo->numIn+1; i++) {
+                         packDataValue(reinterpret_cast<QVariant *>(a[i]), &args[i]);
+                     }
+-                    hookGoValueCallMethod(qmlEngine(value), addr, memberInfo->reflectIndex, args);
++                    hookGoValueCallMethod(qmlEngine(value), ref, memberInfo->reflectIndex, args);
+                     if (memberInfo->numOut > 0) {
+                         unpackDataValue(&args[0], reinterpret_cast<QVariant *>(a[0]));
+                     }
+@@ -121,16 +121,16 @@
+     activate(value, methodOffset() + relativeIndex, 0);
+ }
+ 
+-GoValue::GoValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject *parent)
+-    : addr(addr), typeInfo(typeInfo)
++GoValue::GoValue(GoRef ref, GoTypeInfo *typeInfo, QObject *parent)
++    : ref(ref), typeInfo(typeInfo)
+ {
+-    valueMeta = new GoValueMetaObject(this, addr, typeInfo);
++    valueMeta = new GoValueMetaObject(this, ref, typeInfo);
+     setParent(parent);
+ }
+ 
+ GoValue::~GoValue()
+ {
+-    hookGoValueDestroyed(qmlEngine(this), addr);
++    hookGoValueDestroyed(qmlEngine(this), ref);
+ }
+ 
+ void GoValue::activate(int propIndex)
+@@ -138,10 +138,10 @@
+     valueMeta->activatePropIndex(propIndex);
+ }
+ 
+-GoPaintedValue::GoPaintedValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject *parent)
+-    : addr(addr), typeInfo(typeInfo)
++GoPaintedValue::GoPaintedValue(GoRef ref, GoTypeInfo *typeInfo, QObject *parent)
++    : ref(ref), typeInfo(typeInfo)
+ {
+-    valueMeta = new GoValueMetaObject(this, addr, typeInfo);
++    valueMeta = new GoValueMetaObject(this, ref, typeInfo);
+     setParent(parent);
+ 
+     QQuickItem::setFlag(QQuickItem::ItemHasContents, true);
+@@ -150,7 +150,7 @@
+ 
+ GoPaintedValue::~GoPaintedValue()
+ {
+-    hookGoValueDestroyed(qmlEngine(this), addr);
++    hookGoValueDestroyed(qmlEngine(this), ref);
+ }
+ 
+ void GoPaintedValue::activate(int propIndex)
+@@ -161,7 +161,7 @@
+ void GoPaintedValue::paint(QPainter *painter)
+ {
+     painter->beginNativePainting();
+-    hookGoValuePaint(qmlEngine(this), addr, typeInfo->paint->reflectIndex);
++    hookGoValuePaint(qmlEngine(this), ref, typeInfo->paint->reflectIndex);
+     painter->endNativePainting();
+ }
+ 
+diff -ruN qml-1/cpp/govalue.h /home/mersdk/src/gopkg.in/qml.v1/cpp/govalue.h
+--- qml-1/cpp/govalue.h	2015-02-09 14:10:31.000000000 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/govalue.h	2016-04-05 12:53:20.665583217 +0000
+@@ -20,10 +20,10 @@
+     Q_OBJECT
+ 
+ public:
+-    GoAddr *addr;
++    GoRef ref;
+     GoTypeInfo *typeInfo;
+ 
+-    GoValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject *parent);
++    GoValue(GoRef ref, GoTypeInfo *typeInfo, QObject *parent);
+     virtual ~GoValue();
+ 
+     void activate(int propIndex);
+@@ -37,10 +37,10 @@
+     Q_OBJECT
+ 
+ public:
+-    GoAddr *addr;
++    GoRef ref;
+     GoTypeInfo *typeInfo;
+ 
+-    GoPaintedValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject *parent);
++    GoPaintedValue(GoRef ref, GoTypeInfo *typeInfo, QObject *parent);
+     virtual ~GoPaintedValue();
+ 
+     void activate(int propIndex);
 diff -ruN qml-1/cpp/moc_all.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp
 --- qml-1/cpp/moc_all.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp	2015-09-14 12:31:14.909063916 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp	2016-04-05 13:07:40.260614966 +0000
 @@ -1,4 +1,5 @@
  // This file is automatically generated by cpp/update-moc.sh
 +#include "cpp/moc_capi.cpp"
@@ -414,7 +875,7 @@ diff -ruN qml-1/cpp/moc_all.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_all.cpp
  #include "cpp/moc_idletimer.cpp"
 diff -ruN qml-1/cpp/moc_capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp
 --- qml-1/cpp/moc_capi.cpp	1970-01-01 00:00:00.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp	2015-09-14 12:31:14.909063916 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.cpp	2016-04-05 13:07:40.241614773 +0000
 @@ -0,0 +1,87 @@
 +/****************************************************************************
 +** Meta object code from reading C++ file 'capi.cpp'
@@ -505,7 +966,7 @@ diff -ruN qml-1/cpp/moc_capi.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_capi.c
 +QT_END_MOC_NAMESPACE
 diff -ruN qml-1/cpp/moc_connector.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp
 --- qml-1/cpp/moc_connector.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp	2015-09-14 12:31:14.910063918 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_connector.cpp	2016-04-05 13:07:40.248614903 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'connector.h'
@@ -526,7 +987,7 @@ diff -ruN qml-1/cpp/moc_connector.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_c
  #endif
 diff -ruN qml-1/cpp/moc_govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp
 --- qml-1/cpp/moc_govalue.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp	2015-09-14 12:31:14.921063929 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_govalue.cpp	2016-04-05 13:07:40.254614971 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'govalue.h'
@@ -547,7 +1008,7 @@ diff -ruN qml-1/cpp/moc_govalue.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_gov
  #endif
 diff -ruN qml-1/cpp/moc_idletimer.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp
 --- qml-1/cpp/moc_idletimer.cpp	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp	2015-09-14 12:31:14.922063928 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_idletimer.cpp	2016-04-05 13:07:40.259614964 +0000
 @@ -1,7 +1,7 @@
  /****************************************************************************
  ** Meta object code from reading C++ file 'idletimer.cpp'
@@ -568,7 +1029,7 @@ diff -ruN qml-1/cpp/moc_idletimer.cpp /home/mersdk/src/gopkg.in/qml.v1/cpp/moc_i
  #endif
 diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
 --- qml-1/datatype.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/datatype.go	2015-09-24 11:49:06.034017015 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/datatype.go	2016-04-05 12:53:20.542583113 +0000
 @@ -10,6 +10,7 @@
  	"image/color"
  	"reflect"
@@ -595,7 +1056,7 @@ diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
  	default:
  		dvalue.dataType = C.DTObject
  		if obj, ok := value.(Object); ok {
-@@ -152,6 +157,9 @@
+@@ -152,11 +157,13 @@
  	case C.DTColor:
  		var c uint32 = *(*uint32)(datap)
  		return color.RGBA{byte(c >> 16), byte(c >> 8), byte(c), byte(c >> 24)}
@@ -605,7 +1066,13 @@ diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
  	case C.DTGoAddr:
  		// ObjectByName also does this fold conversion, to have access
  		// to the cvalue. Perhaps the fold should be returned.
-@@ -222,6 +230,8 @@
+-		fold := (*(**valueFold)(datap))
+-		ensureEngine(engine.addr, unsafe.Pointer(fold))
++		fold := ensureEngine(engine.addr, uintptr(datap))
+ 		return fold.gvalue
+ 	case C.DTInvalid:
+ 		return nil
+@@ -222,6 +229,8 @@
  		return C.DTAny
  	case typeRGBA:
  		return C.DTColor
@@ -616,7 +1083,7 @@ diff -ruN qml-1/datatype.go /home/mersdk/src/gopkg.in/qml.v1/datatype.go
  	}
 diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
 --- qml-1/qml.go	2015-02-09 14:10:31.000000000 +0000
-+++ /home/mersdk/src/gopkg.in/qml.v1/qml.go	2015-09-28 13:16:17.133401489 +0000
++++ /home/mersdk/src/gopkg.in/qml.v1/qml.go	2016-04-05 12:53:20.562583132 +0000
 @@ -33,6 +33,22 @@
  
  var engines = make(map[unsafe.Pointer]*Engine)
@@ -690,18 +1157,32 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  	Destroy()
  	On(signal string, function interface{})
  }
-@@ -700,6 +736,7 @@
+@@ -484,8 +520,9 @@
+ 	var result interface{}
+ 	var cerr *C.error
  	RunMain(func() {
- 		for i, param := range params {
- 			packDataValue(param, &dataValueArray[i], obj.engine, jsOwner)
-+			fmt.Printf("Call() %v\n", &dataValueArray[0])
+-		var fold *valueFold
+-		if cerr = C.objectGoAddr(obj.addr, (*unsafe.Pointer)(unsafe.Pointer(&fold))); cerr == nil {
++		var foldr C.GoRef
++		if cerr = C.objectGoRef(obj.addr, &foldr); cerr == nil {
++			fold := restoreFold(uintptr(foldr))
+ 			result = fold.gvalue
  		}
- 		cerr = C.objectInvoke(obj.addr, cmethod, cmethodLen, &result, &dataValueArray[0], C.int(len(params)))
  	})
-@@ -729,6 +766,16 @@
+@@ -729,6 +766,26 @@
  	return &root
  }
  
++// Returns the root object after Sailfish view had been created
++func (e *Engine) SailfishGetWindowRoot() *Common {
++	var obj Common
++	obj.engine = e.engine
++	RunMain(func() {
++		obj.addr = C.windowRootObject(C.sailfishCreateWindow())
++	})
++	return &obj
++}
++
 +// Returns a window structure for Sailfish application QQuickView
 +func (obj *Common) SailfishCreateWindow() *Window {
 +	var win Window
@@ -715,7 +1196,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  // CreateWindow creates a new instance of the component held by obj,
  // and creates a new window holding the instance as its root object.
  // The component instance runs under the ctx context. If ctx is nil,
-@@ -859,6 +906,13 @@
+@@ -859,6 +916,13 @@
  	Common
  }
  
@@ -729,7 +1210,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  // Show exposes the window.
  func (win *Window) Show() {
  	RunMain(func() {
-@@ -903,9 +957,11 @@
+@@ -903,9 +967,11 @@
  	var m sync.Mutex
  	m.Lock()
  	RunMain(func() {
@@ -742,7 +1223,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  		C.windowConnectHidden(win.addr)
  	})
  	m.Lock()
-@@ -1088,9 +1144,9 @@
+@@ -1088,9 +1154,9 @@
  	} else if len(r.bdata) > 0 {
  		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
  	}
@@ -755,7 +1236,7 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
  	C.registerResourceData(C.int(r.version), tree, name, data)
  }
  
-@@ -1102,8 +1158,8 @@
+@@ -1102,8 +1168,8 @@
  	} else if len(r.bdata) > 0 {
  		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
  	}
@@ -766,4 +1247,4 @@ diff -ruN qml-1/qml.go /home/mersdk/src/gopkg.in/qml.v1/qml.go
 +	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
 +	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
  	C.unregisterResourceData(C.int(r.version), tree, name, data)
- } 
+ }
