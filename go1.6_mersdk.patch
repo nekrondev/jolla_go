@@ -1,0 +1,54 @@
+diff -rupN go/src/cmd/link/internal/ld/lib.go go1.5_patched/src/cmd/link/internal/ld/lib.go
+--- go/src/cmd/link/internal/ld/lib.go	2015-08-19 06:05:18.000000000 +0000
++++ go1.5_patched/src/cmd/link/internal/ld/lib.go	2015-08-20 07:42:48.092342320 +0000
+@@ -401,7 +401,7 @@ func Exitf(format string, a ...interface
+ 
+ func errorexit() {
+ 	if coutbuf.f != nil {
+-		if nerrors != 0 {
++		if nerrors > 20 {
+ 			Cflush()
+ 		}
+ 		// For rmtemp run at atexit time on Windows.
+@@ -410,7 +410,7 @@ func errorexit() {
+ 		}
+ 	}
+ 
+-	if nerrors != 0 {
++	if nerrors > 20 {
+ 		if coutbuf.f != nil {
+ 			mayberemoveoutfile()
+ 		}
+@@ -1936,7 +1936,7 @@ func undef() {
+ 	for s := datap; s != nil; s = s.Next {
+ 		undefsym(s)
+ 	}
+-	if nerrors > 0 {
++	if nerrors > 20 {
+ 		errorexit()
+ 	}
+ }
+diff -rupN go/src/runtime/os2_linux.go go1.5_patched/src/runtime/os2_linux.go
+--- go/src/runtime/os2_linux_generic.go	2015-08-19 06:05:19.000000000 +0000
++++ go1.5_patched/src/runtime/os2_linux_generic.go	2015-08-20 08:04:14.194365721 +0000
+@@ -6,7 +6,7 @@ package runtime
+ 
+ const (
+ 	_SS_DISABLE  = 2
+-	_NSIG        = 65
++	_NSIG        = 64
+ 	_SI_USER     = 0
+ 	_SIG_BLOCK   = 0
+ 	_SIG_UNBLOCK = 1
+diff -rupN go/src/runtime/signal1_unix.go go1.5_patched/src/runtime/signal1_unix.go
+--- go/src/runtime/signal1_unix.go	2015-08-19 06:05:19.000000000 +0000
++++ go1.5_patched/src/runtime/signal1_unix.go	2015-08-20 09:19:23.797726765 +0000
+@@ -35,7 +35,7 @@ var (
+ func initsig() {
+ 	// _NSIG is the number of signals on this operating system.
+ 	// sigtable should describe what to do for all the possible signals.
+-	if len(sigtable) != _NSIG {
++	if len(sigtable) != _NSIG+1 {
+ 		print("runtime: len(sigtable)=", len(sigtable), " _NSIG=", _NSIG, "\n")
+ 		throw("initsig")
+ 	}
