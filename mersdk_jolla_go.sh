@@ -26,7 +26,7 @@ printf "Compilation of Jolla applications for emulator will be done from MerSDK 
 printf "you can build your applications without sb2 -t SailfishOS-i486 command. However if you finally cross-compile to\n"
 printf "ARM target you have to call sb2 -t SailfishOS-armv7hl ~/go/bin/linux_arm/go.\n\n"
 printf "The following changes will be applied to MerSDK:\n"
-printf " - Installation of QEMU 2.3.0 and changing SailfishOS-armv7hl target to use new qemu-arm\n"
+printf " - Installation of QEMU 2.4.1 and changing SailfishOS-armv7hl target to use new qemu-arm\n"
 printf " - Modifying .bashrc for GOPATH, GOROOT and go binary to \$PATH setup\n\n"
 printf "The following patches will be applied to GO runtime:\n"
 printf " - Modified errorcounter to build go binary even if there are unknown symbols message printed\n"
@@ -52,14 +52,14 @@ fi
 cd downloads
 
 # Updating QEMU for MerSDK as GO runtime for ARM target will only work with an updated QEMU or else lots of segfaults!
-printf "${GREEN}Downloading QEMU 2.3.0 ...${NOCOLORLF}"
-curl -O -L http://wiki.qemu.org/download/qemu-2.3.0.tar.bz2
-bunzip2 qemu-2.3.0.tar.bz2
-tar xfv qemu-2.3.0.tar
-cd qemu-2.3.0
+printf "${GREEN}Downloading QEMU 2.4.1 ...${NOCOLORLF}"
+curl -O -L http://wiki.qemu.org/download/qemu-2.4.1.tar.bz2
+bunzip2 qemu-2.4.1.tar.bz2
+tar xfv qemu-2.4.1.tar
+cd qemu-2.4.1
 printf "${GREEN}Installing additional dependencies for QEMU compilation ...${NOCOLORLF}"
 sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install libtool zlib-devel glib2-devel flex bison
-printf "${GREEN}Compiling and installing QEMU 2.3.0 ...${NOCOLORLF}"
+printf "${GREEN}Compiling and installing QEMU 2.4.1 ...${NOCOLORLF}"
 ./configure --target-list=arm-softmmu,arm-linux-user
 make & sudo make install
 printf "${GREEN}Reconfigure SB2 ARM target for new QEMU ...${NOCOLORLF}"
