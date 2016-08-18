@@ -1,4 +1,4 @@
-## Jolla Go 1.4.2 / 1.5 / 1.6 runtime setup for MerSDK
+## Jolla Go 1.4.2 / 1.5 / 1.6 / 1.7 runtime setup for MerSDK
 
 ***GO-QML bindings have been updated with https://github.com/SjB/qml/tree/go1.6-port to fix panic issues (Go pointers into c land are not allowed from go1.6 onwards and SjB kindly fixed this issue!).***
 
@@ -11,6 +11,7 @@ Quick installation instructions for vanilla MerSDK VM<br>
 - Launch setup script ./mersdk_jolla_go.sh
 - Optional: If you want to upgrade from Go runtime 1.4 to Go runtime 1.5 execute ./mersdk_jolla_go15_upgrade.sh
 - Or Optional: If you want to upgrade from Go runtime 1.4 to Go runtime 1.6 execute ./mersdk_jolla_go16_upgrade.sh
+- Or Optional: If you want to upgrade from Go runtime 1.4 to Go runtime 1.7 execute ./mersdk_jolla_go17_upgrade.sh
 
 After script has launched it will take some time to build the Jolla Go runtime on MerSDK.<br>
 As a bonus I included the world famous dewpoint calculator source. You can compile it by doing the following steps after 
