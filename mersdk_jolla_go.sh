@@ -61,7 +61,9 @@ printf "${GREEN}Installing additional dependencies for QEMU compilation ...${NOC
 sudo http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY zypper -n install libtool zlib-devel glib2-devel flex bison
 printf "${GREEN}Compiling and installing QEMU 2.4.1 ...${NOCOLORLF}"
 ./configure --target-list=arm-softmmu,arm-linux-user
-make & sudo make install
+# fixes compilation issue on plain 1701-beta SDK
+make
+sudo make install
 printf "${GREEN}Reconfigure SB2 ARM target for new QEMU ...${NOCOLORLF}"
 cd /srv/mer/targets/SailfishOS-armv7hl/
 sb2-init -L --sysroot=/ -C --sysroot=/ -c /usr/local/bin/qemu-arm -m sdk-build -n -N -t / SailfishOS-armv7hl /opt/cross/bin/armv7hl-meego-linux-gnueabi-gcc
