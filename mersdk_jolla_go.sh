@@ -17,6 +17,7 @@ export https_proxy=$HTTPS_PROXY
 GREEN='\033[0;32m'
 NOCOLORLF='\033[0m\n'
 
+VERSION=2.1.3.7
 # Intro
 printf "\n${GREEN}Jolla MerSDK GO 1.4.2 runtime installer by Nekron\n"
 printf "=================================================\n"
@@ -24,9 +25,9 @@ printf "This installer will prepare GO runtime on a vanilla Jolla-1.1.7.28 (1507
 printf "After installation has been completed you will find GO runtime installed into your mersdk home's root directory.\n"
 printf "Compilation of Jolla applications for emulator will be done from MerSDK and not SailfishOS-i486 target, i.e.\n"
 printf "you can build your applications without sb2 -t SailfishOS-i486 command. However if you finally cross-compile to\n"
-printf "ARM target you have to call sb2 -t SailfishOS-armv7hl ~/go/bin/linux_arm/go.\n\n"
+printf "ARM target you have to call sb2 -t SailfishOS-${VERSION}-armv7hl ~/go/bin/linux_arm/go.\n\n"
 printf "The following changes will be applied to MerSDK:\n"
-printf " - Installation of QEMU 2.4.1 and changing SailfishOS-armv7hl target to use new qemu-arm\n"
+printf " - Installation of QEMU 2.4.1 and changing SailfishOS-${VERSION}-armv7hl target to use new qemu-arm\n"
 printf " - Modifying .bashrc for GOPATH, GOROOT and go binary to \$PATH setup\n\n"
 printf "The following patches will be applied to GO runtime:\n"
 printf " - Modified errorcounter to build go binary even if there are unknown symbols message printed\n"
@@ -65,8 +66,8 @@ printf "${GREEN}Compiling and installing QEMU 2.4.1 ...${NOCOLORLF}"
 make
 sudo make install
 printf "${GREEN}Reconfigure SB2 ARM target for new QEMU ...${NOCOLORLF}"
-cd /srv/mer/targets/SailfishOS-armv7hl/
-sb2-init -L --sysroot=/ -C --sysroot=/ -c /usr/local/bin/qemu-arm -m sdk-build -n -N -t / SailfishOS-armv7hl /opt/cross/bin/armv7hl-meego-linux-gnueabi-gcc
+cd /srv/mer/targets/SailfishOS-${VERSION}-armv7hl/
+sb2-init -L --sysroot=/ -C --sysroot=/ -c /usr/local/bin/qemu-arm -m sdk-build -n -N -t / SailfishOS-${VERSION}-armv7hl /opt/cross/bin/armv7hl-meego-linux-gnueabi-gcc
 
 # Creating GO runtime for MerSDK and ARM
 cd ~/downloads
@@ -86,7 +87,7 @@ GOOS=linux GOARCH=arm GOARM=7 ./make.bash
 printf "${GREEN}Cross compiling GO for ARM target (needed for CGO package cross compilation)...${NOCOLORLF}"
 cp ~/go/bin/go ~/go/bin/go_i486
 cp ~/go/bin/gofmt ~/go/bin/gofmt_i486
-sb2 -O use-global-tmp -t SailfishOS-armv7hl ./make.bash
+sb2 -O use-global-tmp -t SailfishOS-${VERSION}-armv7hl ./make.bash
 cp ~/go/bin/go_i486 ~/go/bin/go
 cp ~/go/bin/gofmt_i486 ~/go/bin/gofmt
 printf "${GREEN}Go runtime for MerSDK and ARM target prepared successfully.${NOCOLORLF}"
@@ -108,7 +109,7 @@ printf "${GREEN}Building and installing GO QML bindings for MerSDK ...${NOCOLORL
 cd ~/src/gopkg.in/qml.v1/
 ~/go/bin/go install
 printf "${GREEN}Building and installing GO QML bindings for ARM ...${NOCOLORLF}"
-sb2 -O use-global-tmp -t SailfishOS-armv7hl ~/go/bin/linux_arm/go install
+sb2 -O use-global-tmp -t SailfishOS-${VERSION}-armv7hl ~/go/bin/linux_arm/go install
 printf "${GREEN}Go runtime setup for MerSDK and ARM target completed.${NOCOLORLF}"
 
 # Setting up .bashrc
